@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="sv">
+
+<head>
+   <meta charset="UTF-8" />
+   <meta name="viewport" content="width=device-width, initial-scale=1" />
+   <title>Race condition</title>
+   <style>
+      body {
+         font-family: Arial, sans-serif;
+         max-width: 760px;
+         margin: 40px auto;
+         padding: 0 16px;
+         line-height: 1.5;
+      }
+
+      .box {
+         border: 1px solid #ccc;
+         border-radius: 10px;
+         padding: 16px;
+         margin-bottom: 16px;
+      }
+
+      button {
+         margin: 6px 6px 6px 0;
+         padding: 10px 14px;
+         cursor: pointer;
+      }
+
+      pre {
+         background: #f4f4f4;
+         padding: 12px;
+         border-radius: 8px;
+         white-space: pre-wrap;
+      }
+
+      .order {
+         border-top: 1px solid #ddd;
+         padding: 8px 0;
+      }
+   </style>
+   <link rel="icon" href="data:,">
+</head>
+
+<body>
+   <h1>Race condition – sista biljetten</h1>
+
+   <div class="box">
+      <p><strong>Event:</strong> <span id="eventName">Laddar...</span></p>
+      <p><strong>Biljetter kvar:</strong> <span id="ticketsLeft">-</span></p>
+      <p><strong>Antal köp:</strong> <span id="ordersCount">-</span></p>
+   </div>
+
+   <div class="box">
+      <button id="doubleUnsafeBtn">Två köp samtidigt – osäker</button>
+      <button id="doubleSafeBtn">Två köp samtidigt – säker</button>
+      <button id="resetBtn">Återställ</button>
+   </div>
+
+   <div class="box">
+      <h2>Köp</h2>
+      <div id="ordersList"></div>
+   </div>
+
+   <div class="box">
+      <h2>Logg</h2>
+      <pre id="logBox"></pre>
+   </div>
+
+   <script>
+      const eventNameEl = document.getElementById('eventName');
+      const ticketsLeftEl = document.getElementById('ticketsLeft');
+      const ordersCountEl = document.getElementById('ordersCount');
+      const ordersListEl = document.getElementById('ordersList');
+      const logBoxEl = document.getElementById('logBox');
+
+      const doubleUnsafeBtn = document.getElementById('doubleUnsafeBtn');
+      const doubleSafeBtn = document.getElementById('doubleSafeBtn');
+      const resetBtn = document.getElementById('resetBtn');
+
+      function log(message) {
+         const time = new Date().toLocaleTimeString('sv-SE');
+         logBoxEl.textContent = `[${time}] ${message}\n` + logBoxEl.textContent;
+      }
+
+      async function request(url, options = {}) {
+         const response = await fetch(url, {
+            headers: {
+               'Content-Type': 'application/json'
+            },
+            ...options
+         });
+
+         const data = await response.json();
+
+         if (!response.ok) {
+            throw new Error(data.message || 'Något gick fel.');
+         }
+
+         return data;
+      }
+
+      function renderOrders(orders) {
+         if (!orders.length) {
+            ordersListEl.innerHTML = '<p>Inga köp ännu.</p>';
+            return;
+         }
+
+         ordersListEl.innerHTML = orders
+            .map((order) => {
+               return `
+              <div class="order">
+                <strong>Order #${order.id}</strong><br>
+                Version: ${order.version}<br>
+                Tid: ${new Date(order.created_at).toLocaleString('sv-SE')}
+              </div>
+            `;
+            })
+            .join('');
+      }
+
+      async function loadState() {
+         const data = await request('/api/state');
+         eventNameEl.textContent = data.event.name;
+         ticketsLeftEl.textContent = data.event.tickets_left;
+         ordersCountEl.textContent = data.orders.length;
+         renderOrders(data.orders);
+      }
+
+      doubleUnsafeBtn.addEventListener('click', async () => {
+         log('Skickar två samtidiga köp i osäker version...');
+
+         const results = await Promise.allSettled([
+            request('/api/buy-unsafe', { method: 'POST' }),
+            request('/api/buy-unsafe', { method: 'POST' })
+         ]);
+
+         results.forEach((result, index) => {
+            if (result.status === 'fulfilled') {
+               log(`Request ${index + 1}: ${result.value.message}`);
+            } else {
+               log(`Request ${index + 1}: ${result.reason.message}`);
+            }
+         });
+
+         await loadState();
+      });
+
+      doubleSafeBtn.addEventListener('click', async () => {
+         log('Skickar två samtidiga köp i säker version...');
+
+         const results = await Promise.allSettled([
+            request('/api/buy-safe', { method: 'POST' }),
+            request('/api/buy-safe', { method: 'POST' })
+         ]);
+
+         results.forEach((result, index) => {
+            if (result.status === 'fulfilled') {
+               log(`Request ${index + 1}: ${result.value.message}`);
+            } else {
+               log(`Request ${index + 1}: ${result.reason.message}`);
+            }
+         });
+
+         await loadState();
+      });
+
+      resetBtn.addEventListener('click', async () => {
+         try {
+            const data = await request('/api/reset', { method: 'POST' });
+            log(data.message);
+         } catch (error) {
+            log(error.message);
+         }
+
+         await loadState();
+      });
+
+      loadState().catch((error) => {
+         log(error.message);
+      });
+   </script>
+</body>
+
+</html>

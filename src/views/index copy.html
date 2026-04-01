@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Race condition</title>
+    <link rel="icon" href="data:," />
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 860px;
+        margin: 40px auto;
+        padding: 0 16px;
+        line-height: 1.5;
+        background: #f7f7f9;
+        color: #1d1d1f;
+      }
+
+      .box {
+        border: 1px solid #d7d7dc;
+        border-radius: 14px;
+        padding: 16px;
+        margin-bottom: 16px;
+        background: white;
+      }
+
+      h1,
+      h2 {
+        margin-top: 0;
+      }
+
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      button {
+        padding: 10px 14px;
+        cursor: pointer;
+        border: 1px solid #c9c9d1;
+        border-radius: 10px;
+        background: #fff;
+        font: inherit;
+      }
+
+      button:hover {
+        background: #f3f3f6;
+      }
+
+      .button-primary {
+        background: #1d4ed8;
+        color: white;
+        border-color: #1d4ed8;
+      }
+
+      .button-primary:hover {
+        background: #1b46c2;
+      }
+
+      .button-danger {
+        background: #b91c1c;
+        color: white;
+        border-color: #b91c1c;
+      }
+
+      .button-danger:hover {
+        background: #a31818;
+      }
+
+      pre {
+        background: #111827;
+        color: #f9fafb;
+        padding: 14px;
+        border-radius: 10px;
+        white-space: pre-wrap;
+        overflow-x: auto;
+        margin: 0;
+      }
+
+      code {
+        font-family: Consolas, Monaco, monospace;
+        font-size: 0.95rem;
+      }
+
+      .order {
+        border-top: 1px solid #ddd;
+        padding: 8px 0;
+      }
+
+      dialog {
+        width: min(760px, calc(100vw - 32px));
+        border: none;
+        border-radius: 18px;
+        padding: 0;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.3);
+      }
+
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.45);
+      }
+
+      .dialog-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 18px 20px;
+        border-bottom: 1px solid #e5e7eb;
+      }
+
+      .dialog-title {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+
+      .dialog-body {
+        padding: 20px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .dialog-text {
+        margin: 0;
+        color: #444;
+      }
+
+      .close-button {
+        background: transparent;
+        border: 1px solid #d1d5db;
+      }
+
+      .status-label {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      .status-unsafe {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+
+      .status-safe {
+        background: #dcfce7;
+        color: #166534;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Race condition – sista biljetten</h1>
+
+    <div class="box">
+      <p><strong>Event:</strong> <span id="eventName">Laddar...</span></p>
+      <p><strong>Biljetter kvar:</strong> <span id="ticketsLeft">-</span></p>
+      <p><strong>Antal köp:</strong> <span id="ordersCount">-</span></p>
+    </div>
+
+    <div class="box">
+      <h2>Testa</h2>
+      <div class="button-row">
+        <button id="buyUnsafeBtn">Köp 1 biljett – osäkert</button>
+        <button id="buySafeBtn">Köp 1 biljett – säkert</button>
+        <button id="doubleUnsafeBtn" class="button-danger">Köp 2 samtidigt – osäkert</button>
+        <button id="doubleSafeBtn" class="button-primary">Köp 2 samtidigt – säkert</button>
+        <button id="resetBtn">Återställ</button>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2>Visa koden</h2>
+      <div class="button-row">
+        <button id="showUnsafeCodeBtn">Visa osäker kod</button>
+        <button id="showSafeCodeBtn">Visa säker kod</button>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2>Köp</h2>
+      <div id="ordersList"></div>
+    </div>
+
+    <div class="box">
+      <h2>Logg</h2>
+      <pre id="logBox"></pre>
+    </div>
+
+    <dialog id="codeDialog">
+      <div class="dialog-header">
+        <h3 class="dialog-title" id="dialogTitle">Kodexempel</h3>
+        <button id="closeDialogBtn" class="close-button" type="button">Stäng</button>
+      </div>
+
+      <div class="dialog-body">
+        <p class="dialog-text" id="dialogText"></p>
+        <div id="dialogBadge"></div>
+        <pre><code id="dialogCode"></code></pre>
+      </div>
+    </dialog>
+
+    <script>
+      const eventNameEl = document.getElementById('eventName');
+      const ticketsLeftEl = document.getElementById('ticketsLeft');
+      const ordersCountEl = document.getElementById('ordersCount');
+      const ordersListEl = document.getElementById('ordersList');
+      const logBoxEl = document.getElementById('logBox');
+
+      const buyUnsafeBtn = document.getElementById('buyUnsafeBtn');
+      const buySafeBtn = document.getElementById('buySafeBtn');
+      const doubleUnsafeBtn = document.getElementById('doubleUnsafeBtn');
+      const doubleSafeBtn = document.getElementById('doubleSafeBtn');
+      const resetBtn = document.getElementById('resetBtn');
+
+      const showUnsafeCodeBtn = document.getElementById('showUnsafeCodeBtn');
+      const showSafeCodeBtn = document.getElementById('showSafeCodeBtn');
+
+      const codeDialog = document.getElementById('codeDialog');
+      const closeDialogBtn = document.getElementById('closeDialogBtn');
+      const dialogTitle = document.getElementById('dialogTitle');
+      const dialogText = document.getElementById('dialogText');
+      const dialogBadge = document.getElementById('dialogBadge');
+      const dialogCode = document.getElementById('dialogCode');
+
+      const unsafeCode = `const event = await getEvent();
+
+                           if (event.tickets_left <= 0) {
+                           return res.status(409).json({
+                              message: 'Slutsålt.',
+                           });
+                           }
+
+                           await sleep(1000);
+
+                           await updateEventUnsafe(event);
+                           await createOrder(event.id, 'unsafe');`;
+
+                                 const safeCode = `const updateResult = await client.query(\`
+                           update events
+                           set tickets_left = tickets_left - 1
+                           where id = 1
+                              and tickets_left > 0
+                           returning tickets_left
+                           \`);
+
+                           if (updateResult.rowCount === 0) {
+                           await client.query('rollback');
+                           return res.status(409).json({
+                              message: 'Slutsålt.',
+                           });
+                           }
+
+                           await sleep(1000);
+
+                           await createOrderWithClient(client, 1, 'safe');`;
+
+      function log(message) {
+        const time = new Date().toLocaleTimeString('sv-SE');
+        logBoxEl.textContent = `[${time}] ${message}\n` + logBoxEl.textContent;
+      }
+
+      async function request(url, options = {}) {
+        const response = await fetch(url, {
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          ...options
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.message || 'Något gick fel.');
+        }
+
+        return data;
+      }
+
+      function renderOrders(orders) {
+        if (!orders.length) {
+          ordersListEl.innerHTML = '<p>Inga köp ännu.</p>';
+          return;
+        }
+
+        ordersListEl.innerHTML = orders
+          .map((order) => {
+            return `
+              <div class="order">
+                <strong>Order #${order.id}</strong><br>
+                Version: ${order.version}<br>
+                Tid: ${new Date(order.created_at).toLocaleString('sv-SE')}
+              </div>
+            `;
+          })
+          .join('');
+      }
+
+      async function loadState() {
+        const data = await request('/api/state');
+        eventNameEl.textContent = data.event.name;
+        ticketsLeftEl.textContent = data.event.tickets_left;
+        ordersCountEl.textContent = data.orders.length;
+        renderOrders(data.orders);
+      }
+
+      function showCodeDialog(type) {
+        if (type === 'unsafe') {
+          dialogTitle.textContent = 'Osäker kod';
+          dialogText.textContent = 'Här läser servern först värdet, väntar och uppdaterar sedan efteråt. Två requests kan då hinna läsa samma gamla värde.';
+          dialogBadge.innerHTML = '<span class="status-label status-unsafe">Osäker</span>';
+          dialogCode.textContent = unsafeCode;
+        } else {
+          dialogTitle.textContent = 'Säker kod';
+          dialogText.textContent = 'Här sker kontrollen och uppdateringen direkt i databasen i samma SQL-steg. Det gör lösningen mycket säkrare.';
+          dialogBadge.innerHTML = '<span class="status-label status-safe">Säkrare</span>';
+          dialogCode.textContent = safeCode;
+        }
+
+        codeDialog.showModal();
+      }
+
+      buyUnsafeBtn.addEventListener('click', async () => {
+        try {
+          const data = await request('/api/buy-unsafe', { method: 'POST' });
+          log(data.message);
+        } catch (error) {
+          log(error.message);
+        }
+
+        await loadState();
+      });
+
+      buySafeBtn.addEventListener('click', async () => {
+        try {
+          const data = await request('/api/buy-safe', { method: 'POST' });
+          log(data.message);
+        } catch (error) {
+          log(error.message);
+        }
+
+        await loadState();
+      });
+
+      doubleUnsafeBtn.addEventListener('click', async () => {
+        log('Skickar två samtidiga köp i osäker version...');
+
+        const results = await Promise.allSettled([
+          request('/api/buy-unsafe', { method: 'POST' }),
+          request('/api/buy-unsafe', { method: 'POST' })
+        ]);
+
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            log(`Request ${index + 1}: ${result.value.message}`);
+          } else {
+            log(`Request ${index + 1}: ${result.reason.message}`);
+          }
+        });
+
+        await loadState();
+      });
+
+      doubleSafeBtn.addEventListener('click', async () => {
+        log('Skickar två samtidiga köp i säker version...');
+
+        const results = await Promise.allSettled([
+          request('/api/buy-safe', { method: 'POST' }),
+          request('/api/buy-safe', { method: 'POST' })
+        ]);
+
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            log(`Request ${index + 1}: ${result.value.message}`);
+          } else {
+            log(`Request ${index + 1}: ${result.reason.message}`);
+          }
+        });
+
+        await loadState();
+      });
+
+      resetBtn.addEventListener('click', async () => {
+        try {
+          const data = await request('/api/reset', { method: 'POST' });
+          log(data.message);
+        } catch (error) {
+          log(error.message);
+        }
+
+        await loadState();
+      });
+
+      showUnsafeCodeBtn.addEventListener('click', () => {
+        showCodeDialog('unsafe');
+      });
+
+      showSafeCodeBtn.addEventListener('click', () => {
+        showCodeDialog('safe');
+      });
+
+      closeDialogBtn.addEventListener('click', () => {
+        codeDialog.close();
+      });
+
+      codeDialog.addEventListener('click', (event) => {
+        const rect = codeDialog.getBoundingClientRect();
+        const clickedInside =
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom;
+
+        if (!clickedInside) {
+          codeDialog.close();
+        }
+      });
+
+      loadState().catch((error) => {
+        log(error.message);
+      });
+    </script>
+  </body>
+</html>
