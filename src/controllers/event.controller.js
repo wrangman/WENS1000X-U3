@@ -73,11 +73,13 @@ export async function buySafe(req, res) {
       res.json({
          message: 'Köp lyckades i säker version.',
       });
+
    } catch (error) {
       await client.query('rollback');
       res.status(500).json({
          message: 'Något gick fel.',
       });
+      
    } finally {
       client.release();
    }
